@@ -22,6 +22,18 @@ function connectFailure(code: string): TypeError {
   });
 }
 
+/** Node reports a multi-address connect attempt as an aggregate of per-address errors. */
+function aggregateConnectFailure(codes: string[]): TypeError {
+  return new TypeError("fetch failed", {
+    cause: new AggregateError(
+      codes.map((code) =>
+        Object.assign(new Error(`connect ${code}`), { code }),
+      ),
+      "",
+    ),
+  });
+}
+
 async function listen(body: string): Promise<{ server: Server; url: string }> {
   const server = createServer((_request, response) => response.end(body));
   servers.push(server);
@@ -199,6 +211,39 @@ describe("providerFetch", () => {
     );
 
     expect(await response.text()).toBe("ipv4");
+    expect(globalFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries over IPv4 after an aggregate of connect failures", async () => {
+    clearProxyEnvironment();
+    const target = await listen("ipv4");
+    const globalFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(
+        aggregateConnectFailure(["ENETUNREACH", "EHOSTUNREACH"]),
+      );
+
+    const response = await providerFetch(
+      target.url,
+      {},
+      { retryOverIpv4: true },
+    );
+
+    expect(await response.text()).toBe("ipv4");
+    expect(globalFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry an aggregate of refused connections", async () => {
+    clearProxyEnvironment();
+    const target = await listen("ipv4");
+    const failure = aggregateConnectFailure(["ECONNREFUSED", "ECONNREFUSED"]);
+    const globalFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(failure);
+
+    await expect(
+      providerFetch(target.url, {}, { retryOverIpv4: true }),
+    ).rejects.toBe(failure);
     expect(globalFetch).toHaveBeenCalledTimes(1);
   });
 
