@@ -25,12 +25,12 @@ export type ProviderFetchNetworkOptions = {
 };
 
 /**
- * Connect-stage failures, either from the OS socket layer or from undici's own
- * connect timeout. A failure after the request is on the wire is not one of
- * these, so it is never retried.
+ * Failures to reach the host at all, either from the OS socket layer or from
+ * undici's own connect timeout. A refused connection means a peer answered, so
+ * it is not one of these, and neither is a failure after the request is on the
+ * wire; both would fail the same way over IPv4.
  */
 const CONNECT_FAILURE_CODES = new Set([
-  "ECONNREFUSED",
   "EHOSTUNREACH",
   "ENETUNREACH",
   "EADDRNOTAVAIL",

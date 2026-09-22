@@ -202,6 +202,20 @@ describe("providerFetch", () => {
     expect(globalFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("does not retry a refused connection", async () => {
+    clearProxyEnvironment();
+    const target = await listen("ipv4");
+    const failure = connectFailure("ECONNREFUSED");
+    const globalFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(failure);
+
+    await expect(
+      providerFetch(target.url, {}, { retryOverIpv4: true }),
+    ).rejects.toBe(failure);
+    expect(globalFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("does not retry a failure after the connection was made", async () => {
     clearProxyEnvironment();
     const target = await listen("ipv4");
