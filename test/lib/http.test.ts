@@ -202,6 +202,26 @@ describe("providerFetch", () => {
     expect(globalFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a configured proxy for an IPv4-retry request", async () => {
+    clearProxyEnvironment();
+    const target = await listen("through-proxy");
+    const proxy = await listenProxy();
+    process.env.HTTP_PROXY = proxy.url;
+    const globalFetch = vi.spyOn(globalThis, "fetch");
+    const { providerFetch: fetchWithCurrentEnvironment } =
+      await import("../../src/lib/http.js");
+
+    const response = await fetchWithCurrentEnvironment(
+      target.url,
+      {},
+      { retryOverIpv4: true },
+    );
+
+    expect(await response.text()).toBe("through-proxy");
+    expect(proxy.connections()).toBe(1);
+    expect(globalFetch).not.toHaveBeenCalled();
+  });
+
   it("does not retry a refused connection", async () => {
     clearProxyEnvironment();
     const target = await listen("ipv4");
