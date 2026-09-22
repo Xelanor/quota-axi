@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.50](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.49...quota-axi-v0.1.50) (2026-09-22)
+
+
+### Bug Fixes
+
+* **providers:** apply plan-declared cycle lengths to OpenCode Go windows ([#242](https://github.com/kunchenguid/quota-axi/issues/242)) ([6084f24](https://github.com/kunchenguid/quota-axi/commit/6084f2447ca4895dbe99f64e94b08f66effb5e4f))
+
 ## [0.1.49](https://github.com/kunchenguid/quota-axi/compare/quota-axi-v0.1.48...quota-axi-v0.1.49) (2026-09-21)
 
 
