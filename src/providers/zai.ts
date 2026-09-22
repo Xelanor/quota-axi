@@ -40,7 +40,7 @@ const PI_ZAI_PROVIDER_ID = "zai";
 const USER_AGENT = `quota-axi/${VERSION}`;
 
 const zaiProviderFetch: typeof globalThis.fetch = (input, init) =>
-  providerFetch(input, init, { family: 4 });
+  providerFetch(input, init, { retryFamily: 4 });
 
 const ZAI_PROVIDER_IDS = ["zai-coding-plan", "zai", "z-ai", "z.ai"];
 const ZHIPU_PROVIDER_IDS = ["zhipu", "zhipuai"];

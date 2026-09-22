@@ -16,8 +16,12 @@ type ProxyTransport = {
 };
 
 export type ProviderFetchNetworkOptions = {
-  /** Restrict direct connections when a provider's advertised address family is unreachable. */
-  family?: 4 | 6;
+  /**
+   * Address family to retry a direct request on after the host's default
+   * dual-stack attempt fails to connect, for providers that advertise an
+   * address family the host cannot reach.
+   */
+  retryFamily?: 4 | 6;
 };
 
 const PROXY_TRANSPORTS = Symbol.for("quota-axi.proxy-transports");
@@ -75,9 +79,27 @@ export async function providerFetch(
   network: ProviderFetchNetworkOptions = {},
 ): Promise<Response> {
   const configured = configuredProxyTransport(input);
-  if (!configured && network.family === undefined) return fetch(input, init);
-  const { fetch: transportFetch, dispatcher } = await (configured ??
-    directTransport(network.family!));
+  if (!configured) {
+    const { retryFamily } = network;
+    if (retryFamily === undefined) return fetch(input, init);
+    try {
+      return await fetch(input, init);
+    } catch {
+      return await dispatchedFetch(
+        await directTransport(retryFamily),
+        input,
+        init,
+      );
+    }
+  }
+  return dispatchedFetch(await configured, input, init);
+}
+
+async function dispatchedFetch(
+  { fetch: transportFetch, dispatcher }: ProxyTransport,
+  input: string | URL | Request,
+  init: RequestInit,
+): Promise<Response> {
   const response = await transportFetch(
     input as Parameters<typeof transportFetch>[0],
     { ...init, dispatcher } as Parameters<typeof transportFetch>[1],

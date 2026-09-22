@@ -99,6 +99,7 @@ afterEach(async () => {
   restoreEnvironment("https_proxy", originalHttpsProxyLower);
   restoreEnvironment("NO_PROXY", originalNoProxy);
   restoreEnvironment("no_proxy", originalNoProxyLower);
+  vi.restoreAllMocks();
   vi.resetModules();
 });
 
@@ -163,12 +164,27 @@ describe("providerFetch", () => {
     expect(await response.text()).toBe("direct");
   });
 
-  it("supports an IPv4-only direct provider request", async () => {
+  it("serves a retryFamily request from the default dual-stack path", async () => {
+    clearProxyEnvironment();
+    const target = await listen("dual-stack");
+    const globalFetch = vi.spyOn(globalThis, "fetch");
+
+    const response = await providerFetch(target.url, {}, { retryFamily: 4 });
+
+    expect(await response.text()).toBe("dual-stack");
+    expect(globalFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries on the pinned family only after the default path fails", async () => {
     clearProxyEnvironment();
     const target = await listen("ipv4");
+    const globalFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new TypeError("fetch failed"));
 
-    const response = await providerFetch(target.url, {}, { family: 4 });
+    const response = await providerFetch(target.url, {}, { retryFamily: 4 });
 
     expect(await response.text()).toBe("ipv4");
+    expect(globalFetch).toHaveBeenCalledTimes(1);
   });
 });
