@@ -162,4 +162,13 @@ describe("providerFetch", () => {
 
     expect(await response.text()).toBe("direct");
   });
+
+  it("supports an IPv4-only direct provider request", async () => {
+    clearProxyEnvironment();
+    const target = await listen("ipv4");
+
+    const response = await providerFetch(target.url, {}, { family: 4 });
+
+    expect(await response.text()).toBe("ipv4");
+  });
 });

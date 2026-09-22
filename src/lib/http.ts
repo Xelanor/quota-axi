@@ -15,6 +15,11 @@ type ProxyTransport = {
   fetch: typeof import("undici").fetch;
 };
 
+export type ProviderFetchNetworkOptions = {
+  /** Restrict direct connections when a provider's advertised address family is unreachable. */
+  family?: 4 | 6;
+};
+
 const PROXY_TRANSPORTS = Symbol.for("quota-axi.proxy-transports");
 const sharedGlobals = globalThis as unknown as Record<symbol, unknown>;
 const proxyTransports =
@@ -22,6 +27,13 @@ const proxyTransports =
     | Map<string, Promise<ProxyTransport>>
     | undefined) ?? new Map<string, Promise<ProxyTransport>>();
 sharedGlobals[PROXY_TRANSPORTS] = proxyTransports;
+
+const DIRECT_TRANSPORTS = Symbol.for("quota-axi.direct-transports");
+const directTransports =
+  (sharedGlobals[DIRECT_TRANSPORTS] as
+    | Map<4 | 6, Promise<ProxyTransport>>
+    | undefined) ?? new Map<4 | 6, Promise<ProxyTransport>>();
+sharedGlobals[DIRECT_TRANSPORTS] = directTransports;
 
 function requestUrl(input: string | URL | Request): string {
   if (typeof input === "string") return input;
@@ -43,17 +55,32 @@ function configuredProxyTransport(
   return transport;
 }
 
+function directTransport(family: 4 | 6): Promise<ProxyTransport> {
+  const existing = directTransports.get(family);
+  if (existing) return existing;
+  const transport = import("undici").then(({ Agent, fetch }) => ({
+    // Undici passes this partial net.connect option through at runtime, but its
+    // intersection type incorrectly requires the destination port here.
+    dispatcher: new Agent({ connect: { family } as never }),
+    fetch,
+  }));
+  directTransports.set(family, transport);
+  return transport;
+}
+
 /** Fetch through the host's standard proxy environment when one is configured. */
 export async function providerFetch(
   input: string | URL | Request,
   init: RequestInit = {},
+  network: ProviderFetchNetworkOptions = {},
 ): Promise<Response> {
-  const transport = await configuredProxyTransport(input);
-  if (!transport) return fetch(input, init);
-  const { fetch: proxiedFetch, dispatcher } = transport;
-  const response = await proxiedFetch(
-    input as Parameters<typeof proxiedFetch>[0],
-    { ...init, dispatcher } as Parameters<typeof proxiedFetch>[1],
+  const configured = configuredProxyTransport(input);
+  if (!configured && network.family === undefined) return fetch(input, init);
+  const { fetch: transportFetch, dispatcher } = await (configured ??
+    directTransport(network.family!));
+  const response = await transportFetch(
+    input as Parameters<typeof transportFetch>[0],
+    { ...init, dispatcher } as Parameters<typeof transportFetch>[1],
   );
   // The compiler keeps undici's declared Response and the global one apart
   // because undici-types lags its own implementation, but the surface provider
