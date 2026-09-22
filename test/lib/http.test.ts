@@ -16,6 +16,12 @@ function restoreEnvironment(name: string, value: string | undefined): void {
   else process.env[name] = value;
 }
 
+function connectFailure(code: string): TypeError {
+  return new TypeError("fetch failed", {
+    cause: Object.assign(new Error(`connect ${code}`), { code }),
+  });
+}
+
 async function listen(body: string): Promise<{ server: Server; url: string }> {
   const server = createServer((_request, response) => response.end(body));
   servers.push(server);
@@ -164,27 +170,53 @@ describe("providerFetch", () => {
     expect(await response.text()).toBe("direct");
   });
 
-  it("serves a retryFamily request from the default dual-stack path", async () => {
+  it("serves an IPv4-retry request from the default dual-stack path", async () => {
     clearProxyEnvironment();
     const target = await listen("dual-stack");
     const globalFetch = vi.spyOn(globalThis, "fetch");
 
-    const response = await providerFetch(target.url, {}, { retryFamily: 4 });
+    const response = await providerFetch(
+      target.url,
+      {},
+      { retryOverIpv4: true },
+    );
 
     expect(await response.text()).toBe("dual-stack");
     expect(globalFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("retries on the pinned family only after the default path fails", async () => {
+  it("retries over IPv4 after the default path fails to connect", async () => {
     clearProxyEnvironment();
     const target = await listen("ipv4");
     const globalFetch = vi
       .spyOn(globalThis, "fetch")
-      .mockRejectedValueOnce(new TypeError("fetch failed"));
+      .mockRejectedValueOnce(connectFailure("ENETUNREACH"));
 
-    const response = await providerFetch(target.url, {}, { retryFamily: 4 });
+    const response = await providerFetch(
+      target.url,
+      {},
+      { retryOverIpv4: true },
+    );
 
     expect(await response.text()).toBe("ipv4");
+    expect(globalFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a failure after the connection was made", async () => {
+    clearProxyEnvironment();
+    const target = await listen("ipv4");
+    const failure = new TypeError("terminated", {
+      cause: Object.assign(new Error("socket hang up"), {
+        code: "UND_ERR_SOCKET",
+      }),
+    });
+    const globalFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(failure);
+
+    await expect(
+      providerFetch(target.url, {}, { retryOverIpv4: true }),
+    ).rejects.toBe(failure);
     expect(globalFetch).toHaveBeenCalledTimes(1);
   });
 });

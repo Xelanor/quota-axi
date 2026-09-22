@@ -17,12 +17,26 @@ type ProxyTransport = {
 
 export type ProviderFetchNetworkOptions = {
   /**
-   * Address family to retry a direct request on after the host's default
-   * dual-stack attempt fails to connect, for providers that advertise an
-   * address family the host cannot reach.
+   * Retry a direct request over IPv4 once when the host's default dual-stack
+   * attempt fails to connect, for providers that advertise an IPv6 route this
+   * host cannot reach.
    */
-  retryFamily?: 4 | 6;
+  retryOverIpv4?: boolean;
 };
+
+/**
+ * Connect-stage failures, either from the OS socket layer or from undici's own
+ * connect timeout. A failure after the request is on the wire is not one of
+ * these, so it is never retried.
+ */
+const CONNECT_FAILURE_CODES = new Set([
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EADDRNOTAVAIL",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
 
 const PROXY_TRANSPORTS = Symbol.for("quota-axi.proxy-transports");
 const sharedGlobals = globalThis as unknown as Record<symbol, unknown>;
@@ -32,12 +46,7 @@ const proxyTransports =
     | undefined) ?? new Map<string, Promise<ProxyTransport>>();
 sharedGlobals[PROXY_TRANSPORTS] = proxyTransports;
 
-const DIRECT_TRANSPORTS = Symbol.for("quota-axi.direct-transports");
-const directTransports =
-  (sharedGlobals[DIRECT_TRANSPORTS] as
-    | Map<4 | 6, Promise<ProxyTransport>>
-    | undefined) ?? new Map<4 | 6, Promise<ProxyTransport>>();
-sharedGlobals[DIRECT_TRANSPORTS] = directTransports;
+const IPV4_TRANSPORT = Symbol.for("quota-axi.ipv4-transport");
 
 function requestUrl(input: string | URL | Request): string {
   if (typeof input === "string") return input;
@@ -59,17 +68,31 @@ function configuredProxyTransport(
   return transport;
 }
 
-function directTransport(family: 4 | 6): Promise<ProxyTransport> {
-  const existing = directTransports.get(family);
+function ipv4Transport(): Promise<ProxyTransport> {
+  const existing = sharedGlobals[IPV4_TRANSPORT] as
+    | Promise<ProxyTransport>
+    | undefined;
   if (existing) return existing;
   const transport = import("undici").then(({ Agent, fetch }) => ({
     // Undici passes this partial net.connect option through at runtime, but its
     // intersection type incorrectly requires the destination port here.
-    dispatcher: new Agent({ connect: { family } as never }),
+    dispatcher: new Agent({ connect: { family: 4 } as never }),
     fetch,
   }));
-  directTransports.set(family, transport);
+  sharedGlobals[IPV4_TRANSPORT] = transport;
   return transport;
+}
+
+function isConnectFailure(error: unknown, depth = 0): boolean {
+  if (depth > 4 || !(error instanceof Error)) return false;
+  const { code } = error as NodeJS.ErrnoException;
+  if (code !== undefined && CONNECT_FAILURE_CODES.has(code)) return true;
+  if (
+    error instanceof AggregateError &&
+    error.errors.some((nested) => isConnectFailure(nested, depth + 1))
+  )
+    return true;
+  return isConnectFailure(error.cause, depth + 1);
 }
 
 /** Fetch through the host's standard proxy environment when one is configured. */
@@ -80,16 +103,12 @@ export async function providerFetch(
 ): Promise<Response> {
   const configured = configuredProxyTransport(input);
   if (!configured) {
-    const { retryFamily } = network;
-    if (retryFamily === undefined) return fetch(input, init);
+    if (!network.retryOverIpv4) return fetch(input, init);
     try {
       return await fetch(input, init);
-    } catch {
-      return await dispatchedFetch(
-        await directTransport(retryFamily),
-        input,
-        init,
-      );
+    } catch (error) {
+      if (!isConnectFailure(error)) throw error;
+      return await dispatchedFetch(await ipv4Transport(), input, init);
     }
   }
   return dispatchedFetch(await configured, input, init);
